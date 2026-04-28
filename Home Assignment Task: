@@ -1,0 +1,320 @@
+Home Assignment Task: 
+
+PART 1: INFRASTRUCTURE ANALYSIS
+
+Q1. List all security issues in the code (minimum 6)
+  Ans: Security Issues in the given Infrastructure Archicture. 
+  1. cidr_blocks = ["0.0.0.0/0"] i.e Anyone can attempt SSH
+  2. HTTP (port 80) is open to the entire internet without any protection like WAF
+  3. No security group is explicitly attached to EC2 instances.
+  4. Database credentials are hardcoded in Terraform (username and password).
+  5. No encryption enabled for RDS storage.
+  6. No IAM roles are assigned to EC2 instances
+
+Q2. List all architectural problems (minimum 5)
+  Ans: Architectural problems in the given scenario is.
+  1. No private subnets; all resources are deployed in public subnets.
+  2. No NAT Gateway for private instances to access the internet.
+  3. No load balancer for distributing traffic across EC2 instances.
+  4. No Multi-AZ deployment for RDS exposing single point of failure.
+  5. No backup strategy for database (backup retention = 0).
+
+Q3. Explain what changes you would make for production-readiness. 
+  Ans: This architecture needs following changes to make production-readiness
+  1. Add Application Load Balancer (ALB) in front of EC2 instances.
+  2. Use Auto Scaling Group for EC2 instances.
+  3. Attach IAM roles to EC2 instances.
+  4. Introduce public and private subnEnable encryption for RDS and S3.ets across multiple AZs.
+  5. Enable encryption for RDS and S3.
+  6. Block public access to S3 bucket.
+  7. Add AWS WAF for security.
+  8. Enable CloudWatch logging and monitoring.
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+PART 2: LINUX SYSTEM ADMINISTRATION
+A. Troubleshooting Scenario
+  - One of your web servers (10.0.1.50) is unresponsive. SSH connection times out.
+
+Q1. How would you verify network connectivity from your jump host?
+  Ans: Network Connectivity: 
+      sh: ping 10.0.1.50, nc -zv 10.0.1.50 22, traceroute 10.0.1.50
+
+Q2. Once you confirm network is working, how would you check if SSH service is running?
+  Ans: From Jump Server
+      sh: ssh -i key.pem ec2-user@10.0.1.50
+
+Q3. If SSH is running but you still can’t connect, what could be the issue?
+  Ans: Check SSH Service via console
+      sh: sudo systemctl status sshd
+      sh: sudo systemctl restart sshd
+
+Q4. How would you check CPU, memory, and disk usage?
+  Ans: CPU: top -c, htop,
+       Memory: free -mh, 
+       Disk Usages: df -h
+
+Q5. How would you check recent system logs for errors?
+  Ans: Firing following commands:
+    sh: sudo journalctl -xe
+    sh: sudo tail -n 100 /var/log/syslog
+    sh: sudo tail -f 100 /var/log/messages
+
+
+B. Docker Container Task (10 minutes)
+
+      Write a multi-stage Dockerfile for a simple Python Flask application:
+      Stage 1 (builder): Install dependencies, compile any C extensions
+      Stage 2 (production): Use minimal base image (alpine or slim),
+      copy only necessary files Requirements:
+        - Python 3.11+
+        - Non-root user for security
+        - Health check endpoint
+        - Proper startup command
+      
+      #app.py
+      from flask import Flask, jsonify
+      import os
+      app = Flask(__name__)
+      @app.route('/health')
+      def health():
+      return jsonify({"status": "healthy"})
+      @app.route('/')
+      def index():
+      return jsonify({"message": "TechKraft API v1.0"})
+      if __name__ == '__main__':
+       app.run(host='0.0.0.0', port=5000)
+
+
+      
+    Ans: Multistage Dockerfile:
+
+    # Stage 1: Builder
+    FROM python:3.11-slim AS builder
+
+    WORKDIR /app
+    COPY requirements.txt .
+    RUN pip install --user -r requirements.txt
+    
+    # Stage 2: Production
+    FROM python:3.11-alpine
+    
+    RUN adduser -D appuser
+    WORKDIR /app
+    
+    COPY --from=builder /root/.local /root/.local
+    COPY app.py .
+    
+    ENV PATH=/root/.local/bin:$PATH
+    
+    USER appuser
+    
+    EXPOSE 5000
+    
+    HEALTHCHECK CMD wget -qO- http://localhost:5000/health || exit 1
+    
+    CMD ["python", "app.py"]
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Part 3: PYTHON SCRIPTING (30 minutes)
+
+Write a Python script ec2_monitor.py that:
+1. Query AWS EC2 - Use boto3 to list all running EC2 instances in the account
+2. Get CPU Metrics - Query CloudWatch for CPU utilization (last 1 hour, 5-minute intervals)
+3. Generate Report - Create a JSON report with: 
+  - Instance ID, Name, Type
+  - Average, Min, Max CPU utilization
+  - Flag instances where avg CPU > 80%
+4. File Processing - Read instance tags from a JSON config file
+5. Error Handling - Handle AWS API errors gracefully, log appropriately
+
+# Requirements: - Use argparse for CLI arguments (–region, –threshold, –output) - Use boto3 for AWS interactions - Proper logging with log levels - Type hints where appropriate - Export report to JSON file
+
+Ans: Python Script for ec2_monitor.py
+  
+
+    import boto3
+    import argparse
+    import logging
+    from datetime import datetime, timedelta
+    import json
+    
+    logging.basicConfig(level=logging.INFO)
+    
+    def get_instances(region):
+        ec2 = boto3.client('ec2', region_name=region)
+        return ec2.describe_instances()
+    
+    def get_cpu_metrics(instance_id, region):
+        cw = boto3.client('cloudwatch', region_name=region)
+        end = datetime.utcnow()
+        start = end - timedelta(hours=1)
+    
+        metrics = cw.get_metric_statistics(
+            Namespace='AWS/EC2',
+            MetricName='CPUUtilization',
+            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+            StartTime=start,
+            EndTime=end,
+            Period=300,
+            Statistics=['Average', 'Minimum', 'Maximum']
+        )
+        return metrics
+    
+    def main():
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--region', required=True)
+        parser.add_argument('--threshold', type=int, default=80)
+        parser.add_argument('--output', default='report.json')
+    
+        args = parser.parse_args()
+    
+        instances = get_instances(args.region)
+    
+        report = []
+    
+        for res in instances['Reservations']:
+            for inst in res['Instances']:
+                if inst['State']['Name'] != 'running':
+                    continue
+    
+                metrics = get_cpu_metrics(inst['InstanceId'], args.region)
+    
+                datapoints = metrics['Datapoints']
+                if not datapoints:
+                    continue
+    
+                avg = sum(d['Average'] for d in datapoints) / len(datapoints)
+                report.append({
+                    "InstanceId": inst['InstanceId'],
+                    "AvgCPU": avg,
+                    "Alert": avg > args.threshold
+                })
+    
+        with open(args.output, 'w') as f:
+            json.dump(report, f, indent=2)
+    
+    if __name__ == "__main__":
+        main()
+
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Part 4: BASH SCRIPTING (20 minutes)
+
+Write a bash script analyze_nginx_logs.sh that:
+1. Parse Nginx Access Log - Process /var/log/nginx/access.log
+2. Top 10 IPs - Find top 10 IP addresses by request count
+3. Error Analysis - Calculate percentage of 4xx and 5xx errors
+4. Endpoint Statistics - Top 10 most accessed endpoints
+5. Summary Report - Output formatted report to stdout
+
+# Requirements: - Handle different log formats - Use awk, sed, sort, uniq (no external dependencies besides standard Linux tools) - Accept log file path as argument - Display results in a readable table format - Handle missing/malformed log entries gracefully
+
+
+Ans: Bash Script
+
+      #!/bin/bash
+      LOG_FILE=$1
+      if [ ! -f "$LOG_FILE" ]; then
+        echo "Log file not found"
+        exit 1
+      fi
+      echo "=== Nginx Log Analysis ==="
+      TOTAL=$(wc -l < $LOG_FILE)
+      echo "Total Requests: $TOTAL"
+      echo "Top 10 IPs:"
+      awk '{print $1}' $LOG_FILE | sort | uniq -c | sort -nr | head -10
+      echo "Top Endpoints:"
+      awk '{print $7}' $LOG_FILE | sort | uniq -c | sort -nr | head -10
+      echo "Errors:"
+      awk '{print $9}' $LOG_FILE | grep -E '4[0-9]{2}' | wc -l
+      awk '{print $9}' $LOG_FILE | grep -E '5[0-9]{2}' | wc -l
+
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Part 5: NETWORK ARCHITECTURE DESIGN (20 minutes)
+
+Scenario: Design a redundant DNS architecture for TechKraft.
+
+Current State: - Single Unbound DNS server on EC2 - No failover mechanism - No redundancy
+
+Requirements: 
+    1. Design a redundant DNS architecture using AWS Route 53 
+    2. Include primary/secondary failover mechanisms 
+    3. Ensure low latency for Nepal-based users (consider region selection) 
+    4. Include health check configuration 5. Consider cost optimization
+
+Deliverable: Describe your architecture with: 
+    - Architecture diagram (ASCII or description) 
+    - Key components and their purposes 
+    - Failover logic and health checks 
+    - Latency considerations for South Asia 
+    - Cost estimates (rough monthly) 
+    - Implementation timeline estimate
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Part 6: CI/CD PIPELINE REVIEW (15 minutes)
+Tasks:
+  Q1. Identify problems with this pipeline (minimum 4)
+     1.	No build stage separation
+     2. No security scanning
+     3. No approval step
+     4. Direct deploy to prod
+     5. No environment separation
+
+    
+  Q2. Propose improvements for a production-ready CI/CD pipeline including:
+     - Security scanning
+        1. SAST (Bandit)
+        2. Dependency scan (Snyk)
+
+     - Testing strategy
+        1. Unit + Integration tests
+        2. Coverage check
+
+     - Approval gates
+        1. Build → Test → Security Scan → Staging → Approval → Production
+
+     - Rollback mechanism
+        1. Blue/Green deployment
+        2. Keep previous version artifacts
+
+     - Environment promotion (dev → staging → prod)
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+                
+
+
+
+
+
+
+
+
+
+
